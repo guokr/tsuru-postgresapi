@@ -5,7 +5,7 @@ try:
 except ImportError:
     import json
 
-from postgresapi import models
+from postgresapi import models, managers
 from . import _base
 
 
@@ -38,7 +38,9 @@ class ApisTestCase(_base.TestCase):
 
     def test_create_500(self):
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
         rv = self.client.post('/resources', data={
             'name': 'databasenotexist'
         })
@@ -47,10 +49,11 @@ class ApisTestCase(_base.TestCase):
 
     def test_bind_app_201(self):
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
-        rv = self.client.post('/resources/databasenotexist', data={
-            'unit-host': '127.0.0.1',
-            'app-host': 'testapp.example.com'
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
+        rv = self.client.post('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
         })
         self.assertEqual(rv.status_code, 201)
         self.assertEqual(json.loads(rv.data), {
@@ -62,15 +65,15 @@ class ApisTestCase(_base.TestCase):
         })
 
     def test_bind_app_400(self):
-        rv = self.client.post('/resources/databasenotexist')
+        rv = self.client.post('/resources/databasenotexist/bind-app')
         self.assertEqual(rv.status_code, 400)
-        rv = self.client.post('/resources/databasenotexist', data={
-            'unit-host': ''
+        rv = self.client.post('/resources/databasenotexist/bind-app', data={
+            'app-host': ''
         })
         self.assertEqual(rv.status_code, 400)
 
     def test_bind_app_404(self):
-        rv = self.client.post('/resources/databasenotexist', data={
+        rv = self.client.post('/resources/databasenotexist/bind-app', data={
             'unit-host': '127.0.0.1',
             'app-host': 'testapp.example.com'
         })
@@ -78,23 +81,25 @@ class ApisTestCase(_base.TestCase):
 
     def test_bind_app_412(self):
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
         db = self.create_db()
         with db.transaction() as cursor:
             cursor.execute("UPDATE instance SET state='pending'")
-        rv = self.client.post('/resources/databasenotexist', data={
-            'unit-host': '127.0.0.1',
-            'app-host': 'testapp.example.com'
+        rv = self.client.post('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
         })
         self.assertEqual(rv.status_code, 412)
 
     def test_bind_app_500(self):
         with self.app.app_context():
-            ins = models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            ins = manager.create_instance('databasenotexist')
             ins.create_user('127.0.0.1')
-        rv = self.client.post('/resources/databasenotexist', data={
-            'unit-host': '127.0.0.1',
-            'app-host': 'testapp.example.com'
+
+        rv = self.client.post('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
         })
         self.assertEqual(rv.status_code, 500)
         self.assertEqual(rv.data.strip(),
@@ -102,36 +107,46 @@ class ApisTestCase(_base.TestCase):
 
     def test_unbind_app_200(self):
         with self.app.app_context():
-            ins = models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            ins = manager.create_instance('databasenotexist')
+
             ins.create_user('127.0.0.1')
-        rv = self.client.delete('/resources/databasenotexist'
-                                '/hostname/127.0.0.1')
+        rv = self.client.delete('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
+        }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(rv.status_code, 200)
 
     def test_unbind_app_404(self):
-        rv = self.client.delete('/resources/databasenotexist'
-                                '/hostname/127.0.0.1')
+        rv = self.client.delete('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
+        }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(rv.status_code, 404)
 
     def test_unbind_app_500(self):
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
         # the database exists but not the role
         # tsuru's api flow set this to 500 but not 404
-        rv = self.client.delete('/resources/databasenotexist'
-                                '/hostname/127.0.0.1')
+        rv = self.client.delete('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
+        }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(rv.status_code, 500)
 
         db = self.create_db()
         with db.transaction() as cursor:
             cursor.execute("UPDATE instance SET state='pending'")
-        rv = self.client.delete('/resources/databasenotexist'
-                                '/hostname/127.0.0.1')
+        rv = self.client.delete('/resources/databasenotexist/bind-app', data={
+            'app-host': '127.0.0.1'
+        }, headers={'Content-Type': 'application/x-www-form-urlencoded'})
         self.assertEqual(rv.status_code, 500)
 
     def test_destroy_200(self):
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
         rv = self.client.delete('/resources/databasenotexist')
         self.assertEqual(rv.status_code, 200)
 
@@ -144,7 +159,9 @@ class ApisTestCase(_base.TestCase):
         self.assertEqual(rv.status_code, 404)
 
         with self.app.app_context():
-            models.Instance.create('databasenotexist')
+            manager = managers.SharedManager()
+            manager.create_instance('databasenotexist')
+
         rv = self.client.get('/resources/databasenotexist/status')
         self.assertEqual(rv.status_code, 204)
 

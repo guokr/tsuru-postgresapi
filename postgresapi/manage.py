@@ -31,13 +31,13 @@ def _execute_sqls(basedir, sqls, start_function, stop_function):
     for sql in sqls:
         fname = os.path.join(basedir, sql)
         ver = sql.split('_', 1)[0]
+
         if not sql.endswith('.sql') or \
                 not ver.isdigit() or \
                 not start_function(int(ver)):
             continue
         with open(fname) as fp, \
                 app.db.autocommit() as cursor:
-            print('Running %s ...' % sql)
             cursor.execute(fp.read())
         if stop_function(int(ver)):
             break
@@ -60,6 +60,7 @@ def upgrade_db(to_version=None):
         if ver <= to_version:
             with app.db.transaction() as cursor:
                 cursor.execute('UPDATE db_revision SET id=%s', (ver, ))
+
     _execute_sqls(sqldir, sqls,
                   lambda ver: ver > from_version,
                   stop_version)

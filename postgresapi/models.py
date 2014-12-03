@@ -3,28 +3,18 @@ import re
 import hmac
 import hashlib
 
-import psycopg2
 from flask import current_app as app
 
 from .database import Database
 
-
 class InvalidInstanceName(Exception):
-
     def __init__(self, name):
         self.args = ["%s is a invalid name."]
 
 
-class InstanceAlreadyExists(Exception):
-
-    def __init__(self, name):
-        self.args = ["Instance %s already exists." % name]
-
-
-class InstanceNotFound(Exception):
-
-    def __init__(self, name):
-        self.args = ["Instance %s is not found." % name]
+class InvalidInstanceConfiguration(Exception):
+    def __init__(self, field):
+        self.args = ["%s has not a valid value"]
 
 
 class DatabaseCreationError(Exception):
@@ -131,65 +121,16 @@ class ClusterManager(object):
 
 
 class Instance(object):
-
-    __tablename__ = 'instance'
-
-    STATE_CHOICES = (
-        ("pending", "pending"),
-        ("running", "running"),
-        ("error", "error"),
-    )
-
-    def __init__(self, name):
-        self.name = canonicalize_db_name(name)
-        self.shared = True
-        self.state = 'pending'
-
-    @classmethod
-    def create(cls, name):
-        # if instance.name in settings.RESERVED_NAMES:
-        #     raise InvalidInstanceName(name=instance.name)
-        with app.db.transaction() as cursor:
-            instance = Instance(name)
-            cursor.execute('SELECT 1 FROM %s WHERE name=%%s' %
-                           cls.__tablename__, (instance.name, ))
-            if cursor.fetchone():
-                raise InstanceAlreadyExists(name=instance.name)
-            instance.shared = True
-            try:
-                instance.cluster_manager.create_database(instance.name)
-            except psycopg2.ProgrammingError as e:
-                if e.args and 'already exists' in e.args[0]:
-                    raise InstanceAlreadyExists(name=instance.name)
-                raise
-            instance.state = 'running'
-            cursor.execute('INSERT INTO %s (name, state, shared) '
-                           'VALUES (%%s, %%s, %%s)' % cls.__tablename__,
-                           (instance.name, instance.state, instance.shared))
-            return instance
-
-    @classmethod
-    def retrieve(cls, name):
-        with app.db.transaction() as cursor:
-            instance = Instance(name)
-            cursor.execute('SELECT name, state, shared FROM %s '
-                           'WHERE name=%%s' % cls.__tablename__,
-                           (instance.name, ))
-            try:
-                name, state, shared = cursor.fetchone()
-            except TypeError:
-                raise InstanceNotFound(name=instance.name)
-            instance.state = state
-            instance.shared = shared
-            return instance
-
-    @classmethod
-    def delete(cls, name):
-        instance = cls.retrieve(name)
-        with app.db.transaction() as cursor:
-            instance.cluster_manager.drop_database(instance.name)
-            cursor.execute('DELETE FROM %s WHERE name=%%s' %
-                           cls.__tablename__, (instance.name, ))
+    def __init__(self, name, plan, state='pending', host=None, port=None, container_id=None, username=None,
+                 password=None):
+        self.name = name
+        self.plan = plan
+        self.state = state
+        self.host = host
+        self.port = port
+        self.container_id = container_id
+        self.username = username
+        self.password = password
 
     def create_user(self, host):
         return self.cluster_manager.create_user(self.name, host)
@@ -197,32 +138,38 @@ class Instance(object):
     def drop_user(self, host):
         return self.cluster_manager.drop_user(self.name, host)
 
-    @property
-    def public_host(self):
+    def get_public_host(self):
         return self.cluster_manager.public_host
 
-    @property
-    def port(self):
+    def get_port(self):
         return self.cluster_manager.port
 
-    def is_up(self):
-        return (self.state == "running" and
-                self.cluster_manager.is_up(self.name))
+    def is_up(self, database=None):
+        if database is None:
+            database = self.name
+
+        return self.state == "running" and self.cluster_manager.is_up(database)
 
     @property
     def cluster_manager(self):
         config = app.config
-        if self.shared:
+        if self.plan == 'shared':
             host = config['SHARED_HOST']
             port = config['SHARED_PORT']
-            admin = config['SHARED_ADMIN']
+            user = config['SHARED_ADMIN']
             password = config['SHARED_ADMIN_PASSWORD']
             public_host = config['SHARED_PUBLIC_HOST']
+        elif self.plan == 'dedicated':
+            if self.host is None or self.port is None:
+                raise InvalidInstanceConfiguration(field=('host' if self.host is None else 'port'))
+            elif self.username is None or self.password is None:
+                raise InvalidInstanceConfiguration(field='username or password')
+
+            host = public_host = self.host
+            port = self.port
+            user = self.username
+            password = self.password
         else:
-            raise NotImplementedError(
-                'Currently only shared host is supported')
-        return ClusterManager(host=host,
-                              port=port,
-                              user=admin,
-                              password=password,
-                              public_host=public_host)
+            raise NotImplementedError('Currently only shared and dedicated host are supported')
+
+        return ClusterManager(host=host, port=port, user=user, password=password, public_host=public_host)
