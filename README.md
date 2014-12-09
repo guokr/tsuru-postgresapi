@@ -3,6 +3,8 @@ tsuru-postgresapi
 
 A PostgreSQL API for tsuru PaaS
 
+This repository has been migrated to [official tsuru](https://github.com/tsuru/postgres-api) group.
+
 [![Build Status](https://travis-ci.org/guokr/tsuru-postgresapi.svg?branch=master)](https://travis-ci.org/guokr/tsuru-postgresapi)
 
 
